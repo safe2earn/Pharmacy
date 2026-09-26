@@ -1,0 +1,1 @@
+worker: python3 scrap_worldpharmacist_tg.py
